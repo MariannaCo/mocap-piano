@@ -223,6 +223,7 @@ void CGreenScreen::Update()
     }
 
     bool needToDraw = false;
+	handleSkeletons = false;
 
     if ( WAIT_OBJECT_0 == WaitForSingleObject(m_hNextDepthFrameEvent, 0) )
     {
@@ -245,6 +246,7 @@ void CGreenScreen::Update()
     if ( WAIT_OBJECT_0 == WaitForSingleObject(m_hNextSkeletonEvent, 0) )
     {
         ProcessSkeleton();
+		handleSkeletons = true;
 		needToDraw = true;
     }
 
@@ -313,7 +315,7 @@ void CGreenScreen::Update()
         }
 
         // Draw the data with Direct2D
-        m_pDrawGreenScreen->Draw(m_outputRGBX, m_colorWidth * m_colorHeight * cBytesPerPixel, rightFoot, leftFoot);
+        m_pDrawGreenScreen->Draw(m_outputRGBX, m_colorWidth * m_colorHeight * cBytesPerPixel, tempSkeletonFrame, handleSkeletons);
     }
 }
 
@@ -781,16 +783,20 @@ void CGreenScreen::ProcessSkeleton()
     // smooth out the skeleton data
     m_pNuiSensor->NuiTransformSmooth(&skeletonFrame, NULL);
 
+	// ASSIGN SKELETONS SO IT CAN BE PASSED TO DRAW AND HANDLE FUNCTION
+	tempSkeletonFrame = skeletonFrame;
+
     // Endure Direct2D is ready to draw
-    hr = EnsureDirect2DResources( );
-    if ( FAILED(hr) )
-    {
-        return;
-    }
+//    hr = EnsureDirect2DResources( );
+//    if ( FAILED(hr) )
+//    {
+//        return;
+//    }
 
 //    m_pRenderTarget->BeginDraw();
 //    m_pRenderTarget->Clear( );
-    
+ 
+/*
     RECT rct = {0, 0, 640, 480};
     //GetClientRect( GetDlgItem( m_hWnd, IDC_VIDEOVIEW ), &rct);
     int width = rct.right;
@@ -802,12 +808,6 @@ void CGreenScreen::ProcessSkeleton()
 
         if (NUI_SKELETON_TRACKED == trackingState)
         {
-			// ZERO OUT THE FOOT POINTS
-			rightFoot.x = 0;
-			rightFoot.y = 0;
-			leftFoot.x = 0;
-			leftFoot.y = 0;
-
             // We're tracking the skeleton, draw it
             //DrawSkeleton(skeletonFrame.SkeletonData[i], width, height);
 
@@ -825,13 +825,13 @@ void CGreenScreen::ProcessSkeleton()
 			NUI_SKELETON_POSITION_TRACKING_STATE leftFootState =
 				skeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_LEFT];
 
-			// IF EACH FOOT IS TRACKED, UPDATE ITS X AND Y VALUES
-			if (rightFootState == NUI_SKELETON_POSITION_TRACKED)
+			// IF EACH FOOT IS TRACKED OR INFERRED, UPDATE ITS X AND Y VALUES
+			if (rightFootState == NUI_SKELETON_POSITION_TRACKED || rightFootState == NUI_SKELETON_POSITION_INFERRED)
 			{
 				rightFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x;
 				rightFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y;
 			}
-			if (leftFootState == NUI_SKELETON_POSITION_TRACKED)
+			if (leftFootState == NUI_SKELETON_POSITION_TRACKED || leftFootState == NUI_SKELETON_POSITION_INFERRED)
 			{
 				leftFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x;
 				leftFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y;
@@ -849,16 +849,17 @@ void CGreenScreen::ProcessSkeleton()
 //            m_pRenderTarget->DrawEllipse(ellipse, m_pBrushJointTracked);
 //        }
     }
+*/
 
-    hr = m_pRenderTarget->EndDraw();
+//    hr = m_pRenderTarget->EndDraw();
 
     // Device lost, need to recreate the render target
     // We'll dispose it now and retry drawing
-    if (D2DERR_RECREATE_TARGET == hr)
-    {
-        hr = S_OK;
-        DiscardDirect2DResources();
-    }
+//    if (D2DERR_RECREATE_TARGET == hr)
+//    {
+//        hr = S_OK;
+//        DiscardDirect2DResources();
+//    }
 }
 
 /// <summary>

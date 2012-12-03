@@ -6,6 +6,11 @@
 
 #include "stdafx.h"
 #include "ImageRenderer.h"
+#include <iostream>
+#include <sstream>
+#include <cwchar>
+using namespace std;
+#pragma comment(lib, "dwrite.lib")
 
 /// <summary>
 /// Constructor
@@ -71,9 +76,55 @@ HRESULT ImageRenderer::EnsureResources()
             return hr;
         }
 
-		// CREATE THE RED COLORED BRUSH
+		// CREATE THE COLORED BRUSHES
 		m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(255, 0, 0), &redBrush);
-    }
+		m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(0, 0, 255), &blueBrush);
+
+		// CUSTOM INITIALIZATION FOR TEXT
+		DWriteCreateFactory(
+			DWRITE_FACTORY_TYPE_SHARED,
+			__uuidof(IDWriteFactory),
+			reinterpret_cast<IUnknown**>(&pDWriteFactory)
+		);
+
+		pDWriteFactory->CreateTextFormat(
+			L"Gabriola",
+	        NULL,
+	        DWRITE_FONT_WEIGHT_REGULAR,
+	        DWRITE_FONT_STYLE_NORMAL,
+	        DWRITE_FONT_STRETCH_NORMAL,
+	        30.0f,
+	        L"en-us",
+	        &pTextFormat
+        );
+		pTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+
+		pDWriteFactory->CreateTextFormat(
+	        L"Gabriola",
+	        NULL,
+	        DWRITE_FONT_WEIGHT_REGULAR,
+	        DWRITE_FONT_STYLE_NORMAL,
+	        DWRITE_FONT_STRETCH_NORMAL,
+	        120.0f,
+	        L"en-us",
+	        &bigTextFormat
+        );
+		bigTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+
+		// SET THE TEXT RECTANGLES
+		textRect = D2D1::RectF( 10.0f, 0.0f, m_sourceWidth-10.0f, 60.0f );
+		bigTextRect = D2D1::RectF( 10.0f, m_sourceHeight/2 - 100.0f,
+			m_sourceWidth-10.0f, m_sourceHeight/2 + 100.0f );
+
+		// SET THE KEY RECTANGLES
+		int keyWidth = m_sourceWidth/numKeys;
+
+		for(int i = 0; i < numKeys; i++)
+		{
+			keyRects[i] = D2D1::RectF((float)(keyWidth*i), (float)(m_sourceHeight-40),
+				(float)(keyWidth*i+keyWidth), (float)(m_sourceHeight));
+		}
+	}
 
     return hr;
 }
@@ -125,7 +176,7 @@ HRESULT ImageRenderer::Initialize(HWND hWnd, ID2D1Factory* pD2DFactory, int sour
 /// <param name="pImage">image data in RGBX format</param>
 /// <param name="cbImage">size of image data in bytes</param>
 /// <returns>indicates success or failure</returns>
-HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, D2D1_POINT_2F rightFoot, D2D1_POINT_2F leftFoot)
+HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, NUI_SKELETON_FRAME tempSkeletonFrame, bool handleSkeletons)
 {
     // incorrectly sized image data passed in
     if ( cbImage < ((m_sourceHeight - 1) * m_sourceStride) + (m_sourceWidth * 4) )
@@ -155,17 +206,69 @@ HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, D2D1_POINT_2F r
     // Draw the bitmap stretched to the size of the window
     m_pRenderTarget->DrawBitmap(m_pBitmap);
 
-	// CUSTOM DRAW THE FEET IF TRACKED
-	if(rightFoot.x != 0 && rightFoot.y != 0)
+	// Draw the key outlines
+	for(int i = 0; i < numKeys; i++)
 	{
-		D2D1_ELLIPSE ellipse = D2D1::Ellipse( rightFoot, 20, 20 );
-		m_pRenderTarget->FillEllipse(ellipse, redBrush);
+		m_pRenderTarget->DrawRectangle(keyRects[i], blueBrush);
 	}
-	if(leftFoot.x != 0 && leftFoot.y != 0)
+
+	// SKELETON HANDLING ACTIVITY
+	//if(handleSkeletons)
 	{
-		D2D1_ELLIPSE ellipse = D2D1::Ellipse( leftFoot, 20, 20 );
-		m_pRenderTarget->FillEllipse(ellipse, redBrush);
+		RECT rct = {0, 0, m_sourceWidth, m_sourceHeight};
+		//GetClientRect( GetDlgItem( m_hWnd, IDC_VIDEOVIEW ), &rct);
+		int width = rct.right;
+		int height = rct.bottom;
+		
+		for (int i = 0 ; i < NUI_SKELETON_COUNT; ++i)
+		{
+			NUI_SKELETON_TRACKING_STATE trackingState = tempSkeletonFrame.SkeletonData[i].eTrackingState;
+			
+			if (NUI_SKELETON_TRACKED == trackingState)
+			{
+				// INSTEAD OF DRAWING THE SKELETON, HANDLE FOR FLOOR PIANO
+
+				// UPDATE THE SKELETON POINTS // MAY ONLY NEED TO DO THE FEET FOR OUR PURPOSES
+				for (int p = 0; p < NUI_SKELETON_POSITION_COUNT; ++p)
+				{
+					m_Points[p] = SkeletonToScreen(tempSkeletonFrame.SkeletonData[i].SkeletonPositions[p], width, height);
+				}
+
+				// GET THE JOINT STATES FOR EACH FEET
+				NUI_SKELETON_POSITION_TRACKING_STATE rightFootState =
+					tempSkeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_RIGHT];
+				NUI_SKELETON_POSITION_TRACKING_STATE leftFootState =
+					tempSkeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_LEFT];
+
+				// IF EACH FOOT IS TRACKED OR INFERRED, DO STUFF WITH THE FOOT COORDINATES
+				if (rightFootState == NUI_SKELETON_POSITION_TRACKED)// || rightFootState == NUI_SKELETON_POSITION_INFERRED)
+				{
+					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT], 10, 10 );
+					m_pRenderTarget->FillEllipse(ellipse, redBrush);
+				}
+				if (leftFootState == NUI_SKELETON_POSITION_TRACKED)// || leftFootState == NUI_SKELETON_POSITION_INFERRED)
+				{
+					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_LEFT], 10, 10 );
+					m_pRenderTarget->FillEllipse(ellipse, redBrush);
+				}
+			}
+		}
 	}
+
+/*
+	// DRAW HOW MANY SKELETONS
+	stringstream ss;
+	ss << "NUI_SKELETON_COUNT: " << NUI_SKELETON_COUNT;
+
+	string s = ss.str();
+	WCHAR* text = new WCHAR[s.size()];
+	for(string::size_type i=0; i<s.size(); ++i)
+		text[i]=s[i];
+
+	// DRAW THE SCORE AND LIVES TEXT
+	m_pRenderTarget->DrawTextW(text, s.length(), pTextFormat, textRect, redBrush,
+		D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+*/
             
     hr = m_pRenderTarget->EndDraw();
 
@@ -178,4 +281,26 @@ HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, D2D1_POINT_2F r
     }
 
     return hr;
+}
+
+/// <summary>
+/// Converts a skeleton point to screen space
+/// </summary>
+/// <param name="skeletonPoint">skeleton point to tranform</param>
+/// <param name="width">width (in pixels) of output buffer</param>
+/// <param name="height">height (in pixels) of output buffer</param>
+/// <returns>point in screen-space</returns>
+D2D1_POINT_2F ImageRenderer::SkeletonToScreen(Vector4 skeletonPoint, int width, int height)
+{
+    LONG x, y;
+    USHORT depth;
+
+    // Calculate the skeleton's position on the screen
+    // NuiTransformSkeletonToDepthImage returns coordinates in NUI_IMAGE_RESOLUTION_320x240 space
+    NuiTransformSkeletonToDepthImage(skeletonPoint, &x, &y, &depth);
+
+    float screenPointX = static_cast<float>(x * width) / cScreenWidth;
+    float screenPointY = static_cast<float>(y * height) / cScreenHeight;
+
+    return D2D1::Point2F(screenPointX, screenPointY);
 }

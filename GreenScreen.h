@@ -78,6 +78,8 @@ private:
     ID2D1SolidColorBrush*    m_pBrushBoneInferred;
     D2D1_POINT_2F            m_Points[NUI_SKELETON_POSITION_COUNT];
 
+	bool					handleSkeletons;
+	NUI_SKELETON_FRAME tempSkeletonFrame;
 	D2D1_POINT_2F	rightFoot;
 	D2D1_POINT_2F	leftFoot;
 
