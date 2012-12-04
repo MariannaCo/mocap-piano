@@ -95,7 +95,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>shlwapi.lib;Windowscodecs.lib;kernel32.lib;user32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;Kinect10.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>shlwapi.lib;Windowscodecs.lib;kernel32.lib;user32.lib;winspool.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;odbc32.lib;odbccp32.lib;Kinect10.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <StackReserveSize>10000000</StackReserveSize>
       <StackCommitSize>10000000</StackCommitSize>
       <AdditionalLibraryDirectories>
@@ -166,11 +166,13 @@
     <ClInclude Include="ImageRenderer.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="GreenScreen.h" />
+    <ClInclude Include="SimpleMIDIPlayer.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ImageRenderer.cpp" />
     <ClCompile Include="GreenScreen.cpp" />
+    <ClCompile Include="SimpleMIDIPlayer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="GreenScreen.rc" />
