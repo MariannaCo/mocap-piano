@@ -34,3 +34,4 @@ private:
 DWORD WINAPI _SimpleMIDIPlayerThread(
   LPVOID lpParameter   // thread data
 );
+

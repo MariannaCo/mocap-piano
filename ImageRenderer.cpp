@@ -6,6 +6,7 @@
 
 #include "stdafx.h"
 #include "ImageRenderer.h"
+#include "SimpleMIDIPlayer.h"
 #include <iostream>
 #include <sstream>
 #include <cwchar>
@@ -25,6 +26,9 @@ ImageRenderer::ImageRenderer() :
     m_pBitmap(0)
 {
 }
+
+// Global MIDI player
+extern SimpleMIDIPlayer* midiPlayer;
 
 /// <summary>
 /// Destructor
@@ -123,6 +127,7 @@ HRESULT ImageRenderer::EnsureResources()
 		{
 			keyRects[i] = D2D1::RectF((float)(keyWidth*i), (float)(m_sourceHeight-40),
 				(float)(keyWidth*i+keyWidth), (float)(m_sourceHeight));
+			keysPressed[i] = false;
 		}
 	}
 
@@ -210,6 +215,7 @@ HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, NUI_SKELETON_FR
 	for(int i = 0; i < numKeys; i++)
 	{
 		m_pRenderTarget->DrawRectangle(keyRects[i], blueBrush);
+		footOnKey[i] = false;
 	}
 
 	// SKELETON HANDLING ACTIVITY
@@ -245,12 +251,48 @@ HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, NUI_SKELETON_FR
 				{
 					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT], 10, 10 );
 					m_pRenderTarget->FillEllipse(ellipse, redBrush);
+
+					/** Ugly hack to detect keypresses **/
+					for(int i = 0; i < numKeys; i++)
+					{
+						if ( m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x > keyRects[i].left
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x < keyRects[i].right
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y > keyRects[i].top
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y < keyRects[i].bottom ){
+
+								footOnKey[i] = true;
+
+						}
+					}
 				}
 				if (leftFootState == NUI_SKELETON_POSITION_TRACKED)// || leftFootState == NUI_SKELETON_POSITION_INFERRED)
 				{
 					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_LEFT], 10, 10 );
 					m_pRenderTarget->FillEllipse(ellipse, redBrush);
+
+					/** Ugly hack to detect keypresses **/
+					for(int i = 0; i < numKeys; i++)
+					{
+						if ( m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x > keyRects[i].left
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x < keyRects[i].right
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y > keyRects[i].top
+							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y < keyRects[i].bottom ){
+
+								footOnKey[i] = true;
+						}
+					}
 				}
+			}
+		}
+
+		for(int i = 0; i < numKeys; i++)
+		{
+			if ( !keysPressed[i] && footOnKey[i] ){
+				midiPlayer->playNote((SimpleMIDIPlayer::NotesEnum)i, 4);
+				keysPressed[i] = true;
+			} else if ( keysPressed[i] && !footOnKey[i] ){
+				midiPlayer->stopNote((SimpleMIDIPlayer::NotesEnum)i, 4);
+				keysPressed[i] = false;
 			}
 		}
 	}

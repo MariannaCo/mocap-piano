@@ -52,6 +52,8 @@ public:
 
 	// PIANO KEYS
 	D2D1_RECT_F keyRects[numKeys];
+	bool keysPressed[numKeys];
+	bool footOnKey[numKeys];
 
 private:
     HWND                     m_hWnd;

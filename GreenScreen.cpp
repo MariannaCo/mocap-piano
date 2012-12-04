@@ -8,6 +8,7 @@
 #include <strsafe.h>
 #include "GreenScreen.h"
 #include "resource.h"
+#include "SimpleMIDIPlayer.h"
 
 #include <Wincodec.h>
 
@@ -21,6 +22,9 @@ static const float g_JointThickness = 3.0f;
 static const float g_TrackedBoneThickness = 6.0f;
 static const float g_InferredBoneThickness = 1.0f;
 
+// Global MIDI player
+SimpleMIDIPlayer* midiPlayer;
+
 /// <summary>
 /// Entry point for the application
 /// </summary>
@@ -32,6 +36,7 @@ static const float g_InferredBoneThickness = 1.0f;
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
     CGreenScreen application;
+	midiPlayer = new SimpleMIDIPlayer();
     application.Run(hInstance, nCmdShow);
 }
 
