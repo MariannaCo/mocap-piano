@@ -10,6 +10,9 @@
 #include "NuiApi.h"
 #include "ImageRenderer.h"
 
+#include <gl/GL.h>
+#include "types.h"
+
 class CGreenScreen
 {
     static const int        cBytesPerPixel    = 4;
@@ -71,24 +74,17 @@ private:
 	// FROM SKELETONBASICS.H
 	bool                    m_bSeatedMode;
 	// Skeletal drawing
-    ID2D1HwndRenderTarget*   m_pRenderTarget;
-    ID2D1SolidColorBrush*    m_pBrushJointTracked;
-    ID2D1SolidColorBrush*    m_pBrushJointInferred;
-    ID2D1SolidColorBrush*    m_pBrushBoneTracked;
-    ID2D1SolidColorBrush*    m_pBrushBoneInferred;
-    D2D1_POINT_2F            m_Points[NUI_SKELETON_POSITION_COUNT];
+    Point2f            m_Points[NUI_SKELETON_POSITION_COUNT];
+	Point2f				m_feetPoints[4];
 
 	bool					handleSkeletons;
 	NUI_SKELETON_FRAME tempSkeletonFrame;
-	D2D1_POINT_2F	rightFoot;
-	D2D1_POINT_2F	leftFoot;
 
     // Current Kinect
     INuiSensor*             m_pNuiSensor;
 
     // Direct2D
     ImageRenderer*          m_pDrawGreenScreen;
-    ID2D1Factory*           m_pD2DFactory;
     
     HANDLE                  m_pDepthStreamHandle;
     HANDLE                  m_hNextDepthFrameEvent;
@@ -110,8 +106,8 @@ private:
 
     USHORT*                 m_depthD16;
     BYTE*                   m_colorRGBX;
-    BYTE*                   m_backgroundRGBX;
     BYTE*                   m_outputRGBX;
+
     LONG*                   m_colorCoordinates;
 
     LARGE_INTEGER           m_depthTimeStamp;
@@ -163,17 +159,6 @@ private:
     void                    ProcessSkeleton();
 
     /// <summary>
-    /// Ensure necessary Direct2d resources are created
-    /// </summary>
-    /// <returns>S_OK if successful, otherwise an error code</returns>
-    HRESULT                 EnsureDirect2DResources( );
-
-    /// <summary>
-    /// Dispose Direct2d resources 
-    /// </summary>
-    void                    DiscardDirect2DResources( );
-
-    /// <summary>
     /// Draws a bone line between two joints
     /// </summary>
     /// <param name="skel">skeleton to draw bones from</param>
@@ -196,5 +181,5 @@ private:
     /// <param name="width">width (in pixels) of output buffer</param>
     /// <param name="height">height (in pixels) of output buffer</param>
     /// <returns>point in screen-space</returns>
-    D2D1_POINT_2F           SkeletonToScreen(Vector4 skeletonPoint, int width, int height);
+    Point2f           SkeletonToScreen(Vector4 skeletonPoint, int width, int height);
 };

@@ -10,169 +10,79 @@
 #include <iostream>
 #include <sstream>
 #include <cwchar>
+#include <Wincodec.h>
+
 using namespace std;
-#pragma comment(lib, "dwrite.lib")
+
+#ifndef HINST_THISCOMPONENT
+EXTERN_C IMAGE_DOS_HEADER __ImageBase;
+#define HINST_THISCOMPONENT ((HINSTANCE)&__ImageBase)
+#endif
 
 /// <summary>
 /// Constructor
 /// </summary>
-ImageRenderer::ImageRenderer() : 
-    m_hWnd(0),
-    m_sourceWidth(0),
-    m_sourceHeight(0),
-    m_sourceStride(0),
-    m_pD2DFactory(NULL), 
-    m_pRenderTarget(NULL),
-    m_pBitmap(0)
+ImageRenderer::ImageRenderer()
 {
+	
 }
-
-// Global MIDI player
-extern SimpleMIDIPlayer* midiPlayer;
 
 /// <summary>
 /// Destructor
 /// </summary>
 ImageRenderer::~ImageRenderer()
 {
-    DiscardResources();
-    SafeRelease(m_pD2DFactory);
+
 }
 
-/// <summary>
-/// Ensure necessary Direct2d resources are created
-/// </summary>
-/// <returns>indicates success or failure</returns>
-HRESULT ImageRenderer::EnsureResources()
-{
-    HRESULT hr = S_OK;
+HRESULT ImageRenderer::Initialize( HWND hWnd, int sourceWidth, int sourceHeight, int sourceStride ){
+	m_hWnd = hWnd;
+	EnableOpenGL();
 
-    if (NULL == m_pRenderTarget)
-    {
-        D2D1_SIZE_U size = D2D1::SizeU(m_sourceWidth, m_sourceHeight);
-
-        D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties();
-        rtProps.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE);
-        rtProps.usage = D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE;
-
-        // Create a hWnd render target, in order to render to the window set in initialize
-        hr = m_pD2DFactory->CreateHwndRenderTarget(
-            rtProps,
-            D2D1::HwndRenderTargetProperties(m_hWnd, size),
-            &m_pRenderTarget
-            );
-
-        if ( FAILED(hr) )
-        {
-            return hr;
-        }
-
-        // Create a bitmap that we can copy image data into and then render to the target
-        hr = m_pRenderTarget->CreateBitmap(
-            size, 
-            D2D1::BitmapProperties( D2D1::PixelFormat( DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE) ),
-            &m_pBitmap 
-            );
-
-        if ( FAILED(hr) )
-        {
-            SafeRelease(m_pRenderTarget);
-            return hr;
-        }
-
-		// CREATE THE COLORED BRUSHES
-		m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(255, 0, 0), &redBrush);
-		m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(0, 0, 255), &blueBrush);
-
-		// CUSTOM INITIALIZATION FOR TEXT
-		DWriteCreateFactory(
-			DWRITE_FACTORY_TYPE_SHARED,
-			__uuidof(IDWriteFactory),
-			reinterpret_cast<IUnknown**>(&pDWriteFactory)
-		);
-
-		pDWriteFactory->CreateTextFormat(
-			L"Gabriola",
-	        NULL,
-	        DWRITE_FONT_WEIGHT_REGULAR,
-	        DWRITE_FONT_STYLE_NORMAL,
-	        DWRITE_FONT_STRETCH_NORMAL,
-	        30.0f,
-	        L"en-us",
-	        &pTextFormat
-        );
-		pTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-
-		pDWriteFactory->CreateTextFormat(
-	        L"Gabriola",
-	        NULL,
-	        DWRITE_FONT_WEIGHT_REGULAR,
-	        DWRITE_FONT_STYLE_NORMAL,
-	        DWRITE_FONT_STRETCH_NORMAL,
-	        120.0f,
-	        L"en-us",
-	        &bigTextFormat
-        );
-		bigTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-
-		// SET THE TEXT RECTANGLES
-		textRect = D2D1::RectF( 10.0f, 0.0f, m_sourceWidth-10.0f, 60.0f );
-		bigTextRect = D2D1::RectF( 10.0f, m_sourceHeight/2 - 100.0f,
-			m_sourceWidth-10.0f, m_sourceHeight/2 + 100.0f );
-
-		// SET THE KEY RECTANGLES
-		int keyWidth = m_sourceWidth/numKeys;
-
-		for(int i = 0; i < numKeys; i++)
-		{
-			keyRects[i] = D2D1::RectF((float)(keyWidth*i), (float)(m_sourceHeight-40),
-				(float)(keyWidth*i+keyWidth), (float)(m_sourceHeight));
-			keysPressed[i] = false;
-		}
-	}
-
-    return hr;
-}
-
-/// <summary>
-/// Dispose of Direct2d resources 
-/// </summary>
-void ImageRenderer::DiscardResources()
-{
-    SafeRelease(m_pRenderTarget);
-    SafeRelease(m_pBitmap);
-}
-
-/// <summary>
-/// Set the window to draw to as well as the video format
-/// Implied bits per pixel is 32
-/// </summary>
-/// <param name="hWnd">window to draw to</param>
-/// <param name="pD2DFactory">already created D2D factory object</param>
-/// <param name="sourceWidth">width (in pixels) of image data to be drawn</param>
-/// <param name="sourceHeight">height (in pixels) of image data to be drawn</param>
-/// <param name="sourceStride">length (in bytes) of a single scanline</param>
-/// <returns>indicates success or failure</returns>
-HRESULT ImageRenderer::Initialize(HWND hWnd, ID2D1Factory* pD2DFactory, int sourceWidth, int sourceHeight, int sourceStride)
-{
-    if (NULL == pD2DFactory)
-    {
-        return E_INVALIDARG;
-    }
-
-    m_hWnd = hWnd;
-
-    // One factory for the entire application so save a pointer here
-    m_pD2DFactory = pD2DFactory;
-
-    m_pD2DFactory->AddRef();
-
-    // Get the frame size
     m_sourceWidth  = sourceWidth;
     m_sourceHeight = sourceHeight;
     m_sourceStride = sourceStride;
 
-    return S_OK;
+	// Load the background image into a texture
+	m_backgroundRGBX = new BYTE[m_sourceWidth*m_sourceHeight*sizeof(long)];
+	LoadResourceImage(L"Background", L"Image", m_sourceWidth*m_sourceHeight*sizeof(long), m_backgroundRGBX);
+	glGenTextures( 1, &m_bgTexture );
+    glBindTexture(GL_TEXTURE_2D, m_bgTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sourceWidth, m_sourceHeight, 0,  GL_BGRA, GL_UNSIGNED_BYTE, m_backgroundRGBX);
+
+
+	// Create a texture for rendering frames to
+	glGenTextures( 1, &m_frameTexture );
+    glBindTexture(GL_TEXTURE_2D, m_frameTexture);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); 
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sourceWidth, m_sourceHeight, 0,  GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+	// Create a pixel buffer for the frame texture
+	glewInit();
+	glGenBuffers(0, &pboId);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboId);
+	glBufferData(GL_PIXEL_UNPACK_BUFFER, m_sourceWidth*m_sourceHeight*sizeof(long),0,GL_STREAM_DRAW);
+	glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+	
+    // OpenGL setup
+    glClearColor(0,0,0,0);
+    glClearDepth(1.0f);
+    glEnable(GL_TEXTURE_2D);
+
+    // Initial camera setup
+    glViewport(0, 0, m_sourceWidth, m_sourceHeight);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0,  m_sourceWidth, m_sourceHeight, 0, 1, -1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+	
+	return S_OK;
 }
 
 /// <summary>
@@ -181,168 +91,299 @@ HRESULT ImageRenderer::Initialize(HWND hWnd, ID2D1Factory* pD2DFactory, int sour
 /// <param name="pImage">image data in RGBX format</param>
 /// <param name="cbImage">size of image data in bytes</param>
 /// <returns>indicates success or failure</returns>
-HRESULT ImageRenderer::Draw(BYTE* pImage, unsigned long cbImage, NUI_SKELETON_FRAME tempSkeletonFrame, bool handleSkeletons)
+HRESULT ImageRenderer::Draw(
+	BYTE* pImage, Point2f feetPoints[4] 
+	)
 {
-    // incorrectly sized image data passed in
-    if ( cbImage < ((m_sourceHeight - 1) * m_sourceStride) + (m_sourceWidth * 4) )
+	RECT rct;
+	GetClientRect( m_hWnd, &rct);
+	int width = rct.right;
+	int height = rct.bottom;
+
+	// set the orthogonal projection
+	glViewport(0, 0, width, height);
+	glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0, width, height, 0, 1, -1);
+
+	// clear the buffer
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
+
+	// requires the orthogonal projection
+	drawBG( width, height );
+
+	// also requires the orthogonal projection
+	drawPlayers( pImage, width, height );
+
+	drawFootMarkers( feetPoints );
+	
+	// finished, swap buffers
+	SwapBuffers( m_hDC );
+
+	return S_OK;
+}
+
+void ImageRenderer::drawBG(int width, int height){
+	glBindTexture(GL_TEXTURE_2D, m_bgTexture);
+    glBegin(GL_QUADS);
+       glTexCoord2f(0.0f, 0.0f);
+        glVertex3f(0, 0, 0);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex3f(width, 0, 0);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex3f(width, height, 0.0f);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex3f(0, height, 0.0f);
+    glEnd();
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void ImageRenderer::drawPlayers(BYTE* pImage, int width, int height){
+	// use a pixel buffer to copy frame data using DMA
+	glBindTexture(GL_TEXTURE_2D, m_frameTexture);
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboId);
+
+    // copy pixels from buffer to texture
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_sourceWidth, m_sourceHeight, GL_BGRA_EXT, GL_UNSIGNED_BYTE, 0);
+
+	// bind PBO to update pixel values
+	glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pboId);
+	glBufferData(GL_PIXEL_UNPACK_BUFFER, m_sourceWidth*m_sourceHeight*sizeof(long), 0, GL_STREAM_DRAW);
+	
+	GLubyte* ptr = (GLubyte*)glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+    if(ptr)
     {
-        return E_INVALIDARG;
-    }
-
-    // create the resources for this draw device
-    // they will be recreated if previously lost
-    HRESULT hr = EnsureResources();
-
-    if ( FAILED(hr) )
-    {
-        return hr;
-    }
-    
-    // Copy the image that was passed in into the direct2d bitmap
-    hr = m_pBitmap->CopyFromMemory(NULL, pImage, m_sourceStride);
-
-    if ( FAILED(hr) )
-    {
-        return hr;
-    }
-       
-    m_pRenderTarget->BeginDraw();
-
-    // Draw the bitmap stretched to the size of the window
-    m_pRenderTarget->DrawBitmap(m_pBitmap);
-
-	// Draw the key outlines
-	for(int i = 0; i < numKeys; i++)
-	{
-		m_pRenderTarget->DrawRectangle(keyRects[i], blueBrush);
-		footOnKey[i] = false;
-	}
-
-	// SKELETON HANDLING ACTIVITY
-	//if(handleSkeletons)
-	{
-		RECT rct = {0, 0, m_sourceWidth, m_sourceHeight};
-		//GetClientRect( GetDlgItem( m_hWnd, IDC_VIDEOVIEW ), &rct);
-		int width = rct.right;
-		int height = rct.bottom;
+        // update data directly on the mapped buffer
+		int size = m_sourceWidth*m_sourceHeight;
+        for(int i=0;i<size;i++){
+			((long*)ptr)[i] = ((long*)pImage)[i];
+		}
 		
-		for (int i = 0 ; i < NUI_SKELETON_COUNT; ++i)
-		{
-			NUI_SKELETON_TRACKING_STATE trackingState = tempSkeletonFrame.SkeletonData[i].eTrackingState;
-			
-			if (NUI_SKELETON_TRACKED == trackingState)
-			{
-				// INSTEAD OF DRAWING THE SKELETON, HANDLE FOR FLOOR PIANO
+        glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER); // release pointer to mapping buffer
+    }
 
-				// UPDATE THE SKELETON POINTS // MAY ONLY NEED TO DO THE FEET FOR OUR PURPOSES
-				for (int p = 0; p < NUI_SKELETON_POSITION_COUNT; ++p)
-				{
-					m_Points[p] = SkeletonToScreen(tempSkeletonFrame.SkeletonData[i].SkeletonPositions[p], width, height);
-				}
+	// Use transparency to implement the 'greenscreen' 
+	glEnable(GL_BLEND);
+	glBlendFunc (GL_ONE_MINUS_SRC_ALPHA,GL_SRC_ALPHA);
+	
+    glBegin(GL_QUADS);
+       glTexCoord2f(0.0f, 0.0f);
+        glVertex3f(0, 0, 0);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex3f(width, 0, 0);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex3f(width, height, 0.0f);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex3f(0, height, 0.0f);
+    glEnd(); 
 
-				// GET THE JOINT STATES FOR EACH FEET
-				NUI_SKELETON_POSITION_TRACKING_STATE rightFootState =
-					tempSkeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_RIGHT];
-				NUI_SKELETON_POSITION_TRACKING_STATE leftFootState =
-					tempSkeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_LEFT];
+	glDisable(GL_BLEND);
+	glBindTexture(GL_TEXTURE_2D, 0);
 
-				// IF EACH FOOT IS TRACKED OR INFERRED, DO STUFF WITH THE FOOT COORDINATES
-				if (rightFootState == NUI_SKELETON_POSITION_TRACKED)// || rightFootState == NUI_SKELETON_POSITION_INFERRED)
-				{
-					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT], 10, 10 );
-					m_pRenderTarget->FillEllipse(ellipse, redBrush);
+}
 
-					/** Ugly hack to detect keypresses **/
-					for(int i = 0; i < numKeys; i++)
-					{
-						if ( m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x > keyRects[i].left
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x < keyRects[i].right
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y > keyRects[i].top
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y < keyRects[i].bottom ){
-
-								footOnKey[i] = true;
-
-						}
-					}
-				}
-				if (leftFootState == NUI_SKELETON_POSITION_TRACKED)// || leftFootState == NUI_SKELETON_POSITION_INFERRED)
-				{
-					D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[NUI_SKELETON_POSITION_FOOT_LEFT], 10, 10 );
-					m_pRenderTarget->FillEllipse(ellipse, redBrush);
-
-					/** Ugly hack to detect keypresses **/
-					for(int i = 0; i < numKeys; i++)
-					{
-						if ( m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x > keyRects[i].left
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x < keyRects[i].right
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y > keyRects[i].top
-							&& m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y < keyRects[i].bottom ){
-
-								footOnKey[i] = true;
-						}
-					}
-				}
-			}
-		}
-
-		for(int i = 0; i < numKeys; i++)
-		{
-			if ( !keysPressed[i] && footOnKey[i] ){
-				midiPlayer->playNote((SimpleMIDIPlayer::NotesEnum)i, 4);
-				keysPressed[i] = true;
-			} else if ( keysPressed[i] && !footOnKey[i] ){
-				midiPlayer->stopNote((SimpleMIDIPlayer::NotesEnum)i, 4);
-				keysPressed[i] = false;
-			}
+void ImageRenderer::drawFootMarkers( Point2f feetPoints[4] ){
+	for ( int i=0; i<4; i++ ){
+		if ( feetPoints[i].x != 0.0f && feetPoints[i].y != 0.0f ){
+			circle( feetPoints[i].x, feetPoints[i].y, 10.0f, 10, 1.0f, 0.0f, 0.0f );
 		}
 	}
+	//circle( 100.0f, 100.0f, 10.0f, 10, 1.0f, 0.0f, 0.0f );
+}
 
-/*
-	// DRAW HOW MANY SKELETONS
-	stringstream ss;
-	ss << "NUI_SKELETON_COUNT: " << NUI_SKELETON_COUNT;
+// Enable OpenGL
 
-	string s = ss.str();
-	WCHAR* text = new WCHAR[s.size()];
-	for(string::size_type i=0; i<s.size(); ++i)
-		text[i]=s[i];
+void ImageRenderer::EnableOpenGL()
+{
+	PIXELFORMATDESCRIPTOR pfd;
+	int format;
+	
+	// get the device context (DC)
+	m_hDC = GetDC( m_hWnd );
+	
+	// set the pixel format for the DC
+	ZeroMemory( &pfd, sizeof( pfd ) );
+	pfd.nSize = sizeof( pfd );
+	pfd.nVersion = 1;
+	pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+	pfd.iPixelType = PFD_TYPE_RGBA;
+	pfd.cColorBits = 24;
+	pfd.cDepthBits = 16;
+	pfd.iLayerType = PFD_MAIN_PLANE;
+	format = ChoosePixelFormat( m_hDC, &pfd );
+	SetPixelFormat( m_hDC, format, &pfd );
+	
+	// create and enable the render context (RC)
+	m_hRC = wglCreateContext( m_hDC );
+	wglMakeCurrent( m_hDC, m_hRC );
+	
+}
 
-	// DRAW THE SCORE AND LIVES TEXT
-	m_pRenderTarget->DrawTextW(text, s.length(), pTextFormat, textRect, redBrush,
-		D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
-*/
-            
-    hr = m_pRenderTarget->EndDraw();
+// Disable OpenGL
 
-    // Device lost, need to recreate the render target
-    // We'll dispose it now and retry drawing
-    if (hr == D2DERR_RECREATE_TARGET)
+void ImageRenderer::DisableOpenGL()
+{
+	wglMakeCurrent( NULL, NULL );
+	wglDeleteContext( m_hRC );
+	ReleaseDC( m_hWnd, m_hDC );
+}
+
+
+HRESULT ImageRenderer::LoadResourceImage(
+    PCWSTR resourceName,
+    PCWSTR resourceType,
+    DWORD cOutputBuffer,
+    BYTE* outputBuffer
+    )
+{
+    HRESULT hr = S_OK;
+
+    IWICImagingFactory* pIWICFactory = NULL;
+    IWICBitmapDecoder* pDecoder = NULL;
+    IWICBitmapFrameDecode* pSource = NULL;
+    IWICStream* pStream = NULL;
+    IWICFormatConverter* pConverter = NULL;
+    IWICBitmapScaler* pScaler = NULL;
+
+    HRSRC imageResHandle = NULL;
+    HGLOBAL imageResDataHandle = NULL;
+    void *pImageFile = NULL;
+    DWORD imageFileSize = 0;
+
+    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_IWICImagingFactory, (LPVOID*)&pIWICFactory);
+    if ( FAILED(hr) ) return hr;
+
+    // Locate the resource.
+    imageResHandle = FindResourceW(HINST_THISCOMPONENT, resourceName, resourceType);
+    hr = imageResHandle ? S_OK : E_FAIL;
+
+    if (SUCCEEDED(hr))
     {
-        hr = S_OK;
-        DiscardResources();
+        // Load the resource.
+        imageResDataHandle = LoadResource(HINST_THISCOMPONENT, imageResHandle);
+        hr = imageResDataHandle ? S_OK : E_FAIL;
     }
+
+    if (SUCCEEDED(hr))
+    {
+        // Lock it to get a system memory pointer.
+        pImageFile = LockResource(imageResDataHandle);
+        hr = pImageFile ? S_OK : E_FAIL;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Calculate the size.
+        imageFileSize = SizeofResource(HINST_THISCOMPONENT, imageResHandle);
+        hr = imageFileSize ? S_OK : E_FAIL;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Create a WIC stream to map onto the memory.
+        hr = pIWICFactory->CreateStream(&pStream);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Initialize the stream with the memory pointer and size.
+        hr = pStream->InitializeFromMemory(
+            reinterpret_cast<BYTE*>(pImageFile),
+            imageFileSize
+            );
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Create a decoder for the stream.
+        hr = pIWICFactory->CreateDecoderFromStream(
+            pStream,
+            NULL,
+            WICDecodeMetadataCacheOnLoad,
+            &pDecoder
+            );
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Create the initial frame.
+        hr = pDecoder->GetFrame(0, &pSource);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        // Convert the image format to 32bppPBGRA
+        // (DXGI_FORMAT_B8G8R8A8_UNORM + D2D1_ALPHA_MODE_PREMULTIPLIED).
+        hr = pIWICFactory->CreateFormatConverter(&pConverter);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pIWICFactory->CreateBitmapScaler(&pScaler);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pScaler->Initialize(
+            pSource,
+            m_sourceWidth,
+            m_sourceHeight,
+            WICBitmapInterpolationModeCubic
+            );
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pConverter->Initialize(
+            pScaler,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            NULL,
+            0.f,
+            WICBitmapPaletteTypeMedianCut
+            );
+    }
+
+    UINT width = 0;
+    UINT height = 0;
+    if (SUCCEEDED(hr))
+    {
+        hr = pConverter->GetSize(&width, &height);
+    }
+
+    // make sure the output buffer is large enough
+    if (SUCCEEDED(hr))
+    {
+        if ( width*height*sizeof(long) > cOutputBuffer )
+        {
+            hr = E_FAIL;
+        }
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pConverter->CopyPixels(NULL, width*sizeof(long), cOutputBuffer, outputBuffer);
+    }
+
+    SafeRelease(pScaler);
+    SafeRelease(pConverter);
+    SafeRelease(pSource);
+    SafeRelease(pDecoder);
+    SafeRelease(pStream);
+    SafeRelease(pIWICFactory);
 
     return hr;
 }
 
-/// <summary>
-/// Converts a skeleton point to screen space
-/// </summary>
-/// <param name="skeletonPoint">skeleton point to tranform</param>
-/// <param name="width">width (in pixels) of output buffer</param>
-/// <param name="height">height (in pixels) of output buffer</param>
-/// <returns>point in screen-space</returns>
-D2D1_POINT_2F ImageRenderer::SkeletonToScreen(Vector4 skeletonPoint, int width, int height)
+void ImageRenderer::circle(float x, float y, float r, int segments, float red, float green, float blue)
 {
-    LONG x, y;
-    USHORT depth;
-
-    // Calculate the skeleton's position on the screen
-    // NuiTransformSkeletonToDepthImage returns coordinates in NUI_IMAGE_RESOLUTION_320x240 space
-    NuiTransformSkeletonToDepthImage(skeletonPoint, &x, &y, &depth);
-
-    float screenPointX = static_cast<float>(x * width) / cScreenWidth;
-    float screenPointY = static_cast<float>(y * height) / cScreenHeight;
-
-    return D2D1::Point2F(screenPointX, screenPointY);
+    glBegin( GL_TRIANGLE_FAN );
+		glColor4f(red,green,blue, 1.0f);
+        glVertex2f(x, y);
+        for( int n = 0; n <= segments ; ++n ) {
+            float const t = 2*3.14159*(float)n/(float)segments;
+            glVertex2f(x + sin(t)*r, y + cos(t)*r);
+        }
+    glEnd();
 }

@@ -10,13 +10,6 @@
 #include "resource.h"
 #include "SimpleMIDIPlayer.h"
 
-#include <Wincodec.h>
-
-#ifndef HINST_THISCOMPONENT
-EXTERN_C IMAGE_DOS_HEADER __ImageBase;
-#define HINST_THISCOMPONENT ((HINSTANCE)&__ImageBase)
-#endif
-
 // FROM SKELETONBASICS
 static const float g_JointThickness = 3.0f;
 static const float g_TrackedBoneThickness = 6.0f;
@@ -44,7 +37,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmd
 /// Constructor
 /// </summary>
 CGreenScreen::CGreenScreen() :
-    m_pD2DFactory(NULL),
     m_pDrawGreenScreen(NULL),
     m_hNextDepthFrameEvent(INVALID_HANDLE_VALUE),
     m_hNextColorFrameEvent(INVALID_HANDLE_VALUE),
@@ -54,11 +46,6 @@ CGreenScreen::CGreenScreen() :
 	m_hNextSkeletonEvent(INVALID_HANDLE_VALUE),
     m_pSkeletonStreamHandle(INVALID_HANDLE_VALUE),
     m_bSeatedMode(false),
-    m_pRenderTarget(NULL),
-    m_pBrushJointTracked(NULL),
-    m_pBrushJointInferred(NULL),
-    m_pBrushBoneTracked(NULL),
-    m_pBrushBoneInferred(NULL),
     m_pNuiSensor(NULL)
 {
 	// BELOW ZEROMEMORY FROM SKELETONBASICS
@@ -86,12 +73,7 @@ CGreenScreen::CGreenScreen() :
     m_colorCoordinates = new LONG[m_depthWidth*m_depthHeight*2];
 
     m_colorRGBX = new BYTE[m_colorWidth*m_colorHeight*cBytesPerPixel];
-    m_backgroundRGBX = new BYTE[m_colorWidth*m_colorHeight*cBytesPerPixel];
     m_outputRGBX = new BYTE[m_colorWidth*m_colorHeight*cBytesPerPixel];
-
-	// CUSTOM FOOT POINTS TO TRACK
-	rightFoot = D2D1::Point2F(0.0f, 0.0f);
-	leftFoot = D2D1::Point2F(0.0f, 0.0f);
 }
 
 /// <summary>
@@ -119,9 +101,6 @@ CGreenScreen::~CGreenScreen()
         CloseHandle(m_hNextSkeletonEvent);
     }
 
-    // clean up Direct2D objects
-    DiscardDirect2DResources();
-
     // clean up Direct2D renderer
     delete m_pDrawGreenScreen;
     m_pDrawGreenScreen = NULL;
@@ -131,11 +110,7 @@ CGreenScreen::~CGreenScreen()
     delete[] m_colorCoordinates;
 
     delete[] m_colorRGBX;
-    delete[] m_backgroundRGBX;
     delete[] m_outputRGBX;
-
-    // clean up Direct2D
-    SafeRelease(m_pD2DFactory);
 
     SafeRelease(m_pNuiSensor);
 }
@@ -180,8 +155,6 @@ int CGreenScreen::Run(HINSTANCE hInstance, int nCmdShow)
     //const int eventCount = 2;
 	const int eventCount = 3;
     HANDLE hEvents[eventCount];
-
-    LoadResourceImage(L"Background", L"Image", m_colorWidth*m_colorHeight*cBytesPerPixel, m_backgroundRGBX);
 
     // Main message loop
     while (WM_QUIT != msg.message)
@@ -278,6 +251,7 @@ void CGreenScreen::Update()
         int outputIndex = 0;
         LONG* pDest;
         LONG* pSrc;
+		bool transparent;
 
         // loop over each row and column of the color
         for (LONG y = 0; y < m_colorHeight; ++y)
@@ -290,8 +264,9 @@ void CGreenScreen::Update()
                 USHORT depth  = m_depthD16[depthIndex];
                 USHORT player = NuiDepthPixelToPlayerIndex(depth);
 
-                // default setting source to copy from the background pixel
-                pSrc  = (LONG *)m_backgroundRGBX + outputIndex;
+                // Changed this to use a 'transparency' flag
+                pSrc  = NULL;
+				transparent = true;
 
                 // if we're tracking a player for the current pixel, draw from the color camera
                 if ( player > 0 )
@@ -308,19 +283,23 @@ void CGreenScreen::Update()
 
                         // set source for copy to the color pixel
                         pSrc  = (LONG *)m_colorRGBX + colorIndex;
+						transparent = false;
                     }
                 }
 
                 // calculate output pixel location
-                pDest = (LONG *)m_outputRGBX + outputIndex++;
+				pDest = (LONG *)m_outputRGBX + outputIndex++;
 
-                // write output
-                *pDest = *pSrc;
+                // write output. If the pixel is transparent, set it to the TRANSPARENCY macro
+				if ( !transparent )
+					*pDest = *pSrc;
+				else
+					*pDest = TRANSPARENCY;
             }
         }
 
         // Draw the data with Direct2D
-        m_pDrawGreenScreen->Draw(m_outputRGBX, m_colorWidth * m_colorHeight * cBytesPerPixel, tempSkeletonFrame, handleSkeletons);
+        m_pDrawGreenScreen->Draw(m_outputRGBX, m_feetPoints );
     }
 }
 
@@ -371,16 +350,14 @@ LRESULT CALLBACK CGreenScreen::DlgProc(HWND hWnd, UINT message, WPARAM wParam, L
             // Bind application window handle
             m_hWnd = hWnd;
 
-            // Init Direct2D
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
-
             // Create and initialize a new Direct2D image renderer (take a look at ImageRenderer.h)
             // We'll use this to draw the data we receive from the Kinect to the screen
             m_pDrawGreenScreen = new ImageRenderer();
-            HRESULT hr = m_pDrawGreenScreen->Initialize(GetDlgItem(m_hWnd, IDC_VIDEOVIEW), m_pD2DFactory, m_colorWidth, m_colorHeight, m_colorWidth * sizeof(long));
+
+            HRESULT hr = m_pDrawGreenScreen->Initialize(GetDlgItem(m_hWnd, IDC_VIDEOVIEW), m_colorWidth, m_colorHeight, m_colorWidth * sizeof(long) );
             if (FAILED(hr))
             {
-                SetStatusMessage(L"Failed to initialize the Direct2D draw device.");
+                SetStatusMessage(L"Failed to initialize the OpenGL draw device.");
             }
 
             // Look for a connected Kinect, and create it if found
@@ -595,159 +572,6 @@ HRESULT CGreenScreen::ProcessColor()
     return hr;
 }
 
-/// <summary>
-/// Load an image from a resource into a buffer
-/// </summary>
-/// <param name="resourceName">name of image resource to load</param>
-/// <param name="resourceType">type of resource to load</param>
-/// <param name="cOutputBuffer">size of output buffer, in bytes</param>
-/// <param name="outputBuffer">buffer that will hold the loaded image</param>
-/// <returns>S_OK on success, otherwise failure code</returns>
-HRESULT CGreenScreen::LoadResourceImage(
-    PCWSTR resourceName,
-    PCWSTR resourceType,
-    DWORD cOutputBuffer,
-    BYTE* outputBuffer
-    )
-{
-    HRESULT hr = S_OK;
-
-    IWICImagingFactory* pIWICFactory = NULL;
-    IWICBitmapDecoder* pDecoder = NULL;
-    IWICBitmapFrameDecode* pSource = NULL;
-    IWICStream* pStream = NULL;
-    IWICFormatConverter* pConverter = NULL;
-    IWICBitmapScaler* pScaler = NULL;
-
-    HRSRC imageResHandle = NULL;
-    HGLOBAL imageResDataHandle = NULL;
-    void *pImageFile = NULL;
-    DWORD imageFileSize = 0;
-
-    hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_IWICImagingFactory, (LPVOID*)&pIWICFactory);
-    if ( FAILED(hr) ) return hr;
-
-    // Locate the resource.
-    imageResHandle = FindResourceW(HINST_THISCOMPONENT, resourceName, resourceType);
-    hr = imageResHandle ? S_OK : E_FAIL;
-
-    if (SUCCEEDED(hr))
-    {
-        // Load the resource.
-        imageResDataHandle = LoadResource(HINST_THISCOMPONENT, imageResHandle);
-        hr = imageResDataHandle ? S_OK : E_FAIL;
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Lock it to get a system memory pointer.
-        pImageFile = LockResource(imageResDataHandle);
-        hr = pImageFile ? S_OK : E_FAIL;
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Calculate the size.
-        imageFileSize = SizeofResource(HINST_THISCOMPONENT, imageResHandle);
-        hr = imageFileSize ? S_OK : E_FAIL;
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Create a WIC stream to map onto the memory.
-        hr = pIWICFactory->CreateStream(&pStream);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Initialize the stream with the memory pointer and size.
-        hr = pStream->InitializeFromMemory(
-            reinterpret_cast<BYTE*>(pImageFile),
-            imageFileSize
-            );
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Create a decoder for the stream.
-        hr = pIWICFactory->CreateDecoderFromStream(
-            pStream,
-            NULL,
-            WICDecodeMetadataCacheOnLoad,
-            &pDecoder
-            );
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Create the initial frame.
-        hr = pDecoder->GetFrame(0, &pSource);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        // Convert the image format to 32bppPBGRA
-        // (DXGI_FORMAT_B8G8R8A8_UNORM + D2D1_ALPHA_MODE_PREMULTIPLIED).
-        hr = pIWICFactory->CreateFormatConverter(&pConverter);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = pIWICFactory->CreateBitmapScaler(&pScaler);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = pScaler->Initialize(
-            pSource,
-            m_colorWidth,
-            m_colorHeight,
-            WICBitmapInterpolationModeCubic
-            );
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = pConverter->Initialize(
-            pScaler,
-            GUID_WICPixelFormat32bppPBGRA,
-            WICBitmapDitherTypeNone,
-            NULL,
-            0.f,
-            WICBitmapPaletteTypeMedianCut
-            );
-    }
-
-    UINT width = 0;
-    UINT height = 0;
-    if (SUCCEEDED(hr))
-    {
-        hr = pConverter->GetSize(&width, &height);
-    }
-
-    // make sure the output buffer is large enough
-    if (SUCCEEDED(hr))
-    {
-        if ( width*height*cBytesPerPixel > cOutputBuffer )
-        {
-            hr = E_FAIL;
-        }
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = pConverter->CopyPixels(NULL, width*cBytesPerPixel, cOutputBuffer, outputBuffer);
-    }
-
-    SafeRelease(pScaler);
-    SafeRelease(pConverter);
-    SafeRelease(pSource);
-    SafeRelease(pDecoder);
-    SafeRelease(pStream);
-    SafeRelease(pIWICFactory);
-
-    return hr;
-}
 
 /// <summary>
 /// Set the status bar message
@@ -758,18 +582,6 @@ void CGreenScreen::SetStatusMessage(WCHAR * szMessage)
     SendDlgItemMessageW(m_hWnd, IDC_STATUS, WM_SETTEXT, 0, (LPARAM)szMessage);
 }
 
-/// <summary>
-/// Dispose Direct2d resources 
-/// </summary>
-void CGreenScreen::DiscardDirect2DResources( )
-{
-    SafeRelease(m_pRenderTarget);
-
-    SafeRelease(m_pBrushJointTracked);
-    SafeRelease(m_pBrushJointInferred);
-    SafeRelease(m_pBrushBoneTracked);
-    SafeRelease(m_pBrushBoneInferred);
-}
 
 // SKELETON FUNCTIONS
 /// <summary>
@@ -777,6 +589,11 @@ void CGreenScreen::DiscardDirect2DResources( )
 /// </summary>
 void CGreenScreen::ProcessSkeleton()
 {
+	RECT rct;
+	GetClientRect(GetDlgItem(m_hWnd, IDC_VIDEOVIEW), &rct);
+	int windowWidth = rct.right;
+	int windowHeight = rct.bottom;
+
     NUI_SKELETON_FRAME skeletonFrame = {0};
 
     HRESULT hr = m_pNuiSensor->NuiSkeletonGetNextFrame(0, &skeletonFrame);
@@ -791,179 +608,41 @@ void CGreenScreen::ProcessSkeleton()
 	// ASSIGN SKELETONS SO IT CAN BE PASSED TO DRAW AND HANDLE FUNCTION
 	tempSkeletonFrame = skeletonFrame;
 
-    // Endure Direct2D is ready to draw
-//    hr = EnsureDirect2DResources( );
-//    if ( FAILED(hr) )
-//    {
-//        return;
-//    }
+	// Reset feet points. In case they aren't being tracked, points at (0,0) aren't drawn
+	for ( int i=0; i<4; i++ )
+			m_feetPoints[i] = Point2f( 0.0f, 0.0f );
 
-//    m_pRenderTarget->BeginDraw();
-//    m_pRenderTarget->Clear( );
- 
-/*
-    RECT rct = {0, 0, 640, 480};
-    //GetClientRect( GetDlgItem( m_hWnd, IDC_VIDEOVIEW ), &rct);
-    int width = rct.right;
-    int height = rct.bottom;
+	// hardcoded, two skeletons tracked
+	for ( int skelIndex=0; skelIndex<2; skelIndex++ ){
+		NUI_SKELETON_DATA& skel = skeletonFrame.SkeletonData[skelIndex];
+		
+		// calculate all of the joint points, just in case we want them
+		for (int i = 0; i < NUI_SKELETON_POSITION_COUNT; ++i)
+		{
+			m_Points[i] = SkeletonToScreen(skel.SkeletonPositions[i], windowWidth, windowHeight);
+		}
 
-    for (int i = 0 ; i < NUI_SKELETON_COUNT; ++i)
-    {
-        NUI_SKELETON_TRACKING_STATE trackingState = skeletonFrame.SkeletonData[i].eTrackingState;
+		NUI_SKELETON_POSITION_TRACKING_STATE rightFootState =
+			skeletonFrame.SkeletonData[skelIndex].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_RIGHT];
+		NUI_SKELETON_POSITION_TRACKING_STATE leftFootState =
+			skeletonFrame.SkeletonData[skelIndex].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_LEFT];
 
-        if (NUI_SKELETON_TRACKED == trackingState)
-        {
-            // We're tracking the skeleton, draw it
-            //DrawSkeleton(skeletonFrame.SkeletonData[i], width, height);
-
-			// INSTEAD OF DRAWING THE SKELETON, HANDLE FOR FLOOR PIANO
-
-			// UPDATE THE SKELETON POINTS
-		    for (int p = 0; p < NUI_SKELETON_POSITION_COUNT; ++p)
-		    {
-				m_Points[p] = SkeletonToScreen(skeletonFrame.SkeletonData[i].SkeletonPositions[p], width, height);
-			}
-
-			// GET THE JOINT STATES FOR EACH FEET
-			NUI_SKELETON_POSITION_TRACKING_STATE rightFootState =
-				skeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_RIGHT];
-			NUI_SKELETON_POSITION_TRACKING_STATE leftFootState =
-				skeletonFrame.SkeletonData[i].eSkeletonPositionTrackingState[NUI_SKELETON_POSITION_FOOT_LEFT];
-
-			// IF EACH FOOT IS TRACKED OR INFERRED, UPDATE ITS X AND Y VALUES
-			if (rightFootState == NUI_SKELETON_POSITION_TRACKED || rightFootState == NUI_SKELETON_POSITION_INFERRED)
-			{
-				rightFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x;
-				rightFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y;
-			}
-			if (leftFootState == NUI_SKELETON_POSITION_TRACKED || leftFootState == NUI_SKELETON_POSITION_INFERRED)
-			{
-				leftFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x;
-				leftFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y;
-			}
-        }
-//        else if (NUI_SKELETON_POSITION_ONLY == trackingState)
-//        {
-//            // we've only received the center point of the skeleton, draw that
-//            D2D1_ELLIPSE ellipse = D2D1::Ellipse(
-//                SkeletonToScreen(skeletonFrame.SkeletonData[i].Position, width, height),
-//                g_JointThickness,
-//                g_JointThickness
-//                );
-
-//            m_pRenderTarget->DrawEllipse(ellipse, m_pBrushJointTracked);
-//        }
-    }
-*/
-
-//    hr = m_pRenderTarget->EndDraw();
-
-    // Device lost, need to recreate the render target
-    // We'll dispose it now and retry drawing
-//    if (D2DERR_RECREATE_TARGET == hr)
-//    {
-//        hr = S_OK;
-//        DiscardDirect2DResources();
-//    }
-}
-
-/// <summary>
-/// Draws a skeleton
-/// </summary>
-/// <param name="skel">skeleton to draw</param>
-/// <param name="windowWidth">width (in pixels) of output buffer</param>
-/// <param name="windowHeight">height (in pixels) of output buffer</param>
-void CGreenScreen::DrawSkeleton(const NUI_SKELETON_DATA & skel, int windowWidth, int windowHeight)
-{      
-    int i;
-
-    for (i = 0; i < NUI_SKELETON_POSITION_COUNT; ++i)
-    {
-        m_Points[i] = SkeletonToScreen(skel.SkeletonPositions[i], windowWidth, windowHeight);
-    }
-
-    // Render Torso
-    DrawBone(skel, NUI_SKELETON_POSITION_HEAD, NUI_SKELETON_POSITION_SHOULDER_CENTER);
-    DrawBone(skel, NUI_SKELETON_POSITION_SHOULDER_CENTER, NUI_SKELETON_POSITION_SHOULDER_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_SHOULDER_CENTER, NUI_SKELETON_POSITION_SHOULDER_RIGHT);
-    DrawBone(skel, NUI_SKELETON_POSITION_SHOULDER_CENTER, NUI_SKELETON_POSITION_SPINE);
-    DrawBone(skel, NUI_SKELETON_POSITION_SPINE, NUI_SKELETON_POSITION_HIP_CENTER);
-    DrawBone(skel, NUI_SKELETON_POSITION_HIP_CENTER, NUI_SKELETON_POSITION_HIP_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_HIP_CENTER, NUI_SKELETON_POSITION_HIP_RIGHT);
-
-    // Left Arm
-    DrawBone(skel, NUI_SKELETON_POSITION_SHOULDER_LEFT, NUI_SKELETON_POSITION_ELBOW_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_ELBOW_LEFT, NUI_SKELETON_POSITION_WRIST_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_WRIST_LEFT, NUI_SKELETON_POSITION_HAND_LEFT);
-
-    // Right Arm
-    DrawBone(skel, NUI_SKELETON_POSITION_SHOULDER_RIGHT, NUI_SKELETON_POSITION_ELBOW_RIGHT);
-    DrawBone(skel, NUI_SKELETON_POSITION_ELBOW_RIGHT, NUI_SKELETON_POSITION_WRIST_RIGHT);
-    DrawBone(skel, NUI_SKELETON_POSITION_WRIST_RIGHT, NUI_SKELETON_POSITION_HAND_RIGHT);
-
-    // Left Leg
-    DrawBone(skel, NUI_SKELETON_POSITION_HIP_LEFT, NUI_SKELETON_POSITION_KNEE_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_KNEE_LEFT, NUI_SKELETON_POSITION_ANKLE_LEFT);
-    DrawBone(skel, NUI_SKELETON_POSITION_ANKLE_LEFT, NUI_SKELETON_POSITION_FOOT_LEFT);
-
-    // Right Leg
-    DrawBone(skel, NUI_SKELETON_POSITION_HIP_RIGHT, NUI_SKELETON_POSITION_KNEE_RIGHT);
-    DrawBone(skel, NUI_SKELETON_POSITION_KNEE_RIGHT, NUI_SKELETON_POSITION_ANKLE_RIGHT);
-    DrawBone(skel, NUI_SKELETON_POSITION_ANKLE_RIGHT, NUI_SKELETON_POSITION_FOOT_RIGHT);
-    
-    // Draw the joints in a different color
-    for (i = 0; i < NUI_SKELETON_POSITION_COUNT; ++i)
-    {
-        D2D1_ELLIPSE ellipse = D2D1::Ellipse( m_Points[i], g_JointThickness, g_JointThickness );
-
-        if ( skel.eSkeletonPositionTrackingState[i] == NUI_SKELETON_POSITION_INFERRED )
-        {
-            m_pRenderTarget->DrawEllipse(ellipse, m_pBrushJointInferred);
-        }
-        else if ( skel.eSkeletonPositionTrackingState[i] == NUI_SKELETON_POSITION_TRACKED )
-        {
-            m_pRenderTarget->DrawEllipse(ellipse, m_pBrushJointTracked);
-        }
-    }
-
-	rightFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x;
-	rightFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y;
-	leftFoot.x = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x;
-	leftFoot.y = m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y;
-}
-
-/// <summary>
-/// Draws a bone line between two joints
-/// </summary>
-/// <param name="skel">skeleton to draw bones from</param>
-/// <param name="joint0">joint to start drawing from</param>
-/// <param name="joint1">joint to end drawing at</param>
-void CGreenScreen::DrawBone(const NUI_SKELETON_DATA & skel, NUI_SKELETON_POSITION_INDEX joint0, NUI_SKELETON_POSITION_INDEX joint1)
-{
-    NUI_SKELETON_POSITION_TRACKING_STATE joint0State = skel.eSkeletonPositionTrackingState[joint0];
-    NUI_SKELETON_POSITION_TRACKING_STATE joint1State = skel.eSkeletonPositionTrackingState[joint1];
-
-    // If we can't find either of these joints, exit
-    if (joint0State == NUI_SKELETON_POSITION_NOT_TRACKED || joint1State == NUI_SKELETON_POSITION_NOT_TRACKED)
-    {
-        return;
-    }
-    
-    // Don't draw if both points are inferred
-    if (joint0State == NUI_SKELETON_POSITION_INFERRED && joint1State == NUI_SKELETON_POSITION_INFERRED)
-    {
-        return;
-    }
-
-    // We assume all drawn bones are inferred unless BOTH joints are tracked
-    if (joint0State == NUI_SKELETON_POSITION_TRACKED && joint1State == NUI_SKELETON_POSITION_TRACKED)
-    {
-        m_pRenderTarget->DrawLine(m_Points[joint0], m_Points[joint1], m_pBrushBoneTracked, g_TrackedBoneThickness);
-    }
-    else
-    {
-        m_pRenderTarget->DrawLine(m_Points[joint0], m_Points[joint1], m_pBrushBoneInferred, g_InferredBoneThickness);
-    }
+		if (rightFootState == NUI_SKELETON_POSITION_TRACKED || rightFootState == NUI_SKELETON_POSITION_INFERRED)
+		{
+			m_feetPoints[skelIndex*2] = Point2f(
+				m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].x,
+				m_Points[NUI_SKELETON_POSITION_FOOT_RIGHT].y
+				);
+		}
+		if (leftFootState == NUI_SKELETON_POSITION_TRACKED || leftFootState == NUI_SKELETON_POSITION_INFERRED)
+		{
+			m_feetPoints[(skelIndex*2)+1] = Point2f(
+					m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].x,
+					m_Points[NUI_SKELETON_POSITION_FOOT_LEFT].y
+					);
+		}
+		
+	}
 }
 
 /// <summary>
@@ -973,66 +652,18 @@ void CGreenScreen::DrawBone(const NUI_SKELETON_DATA & skel, NUI_SKELETON_POSITIO
 /// <param name="width">width (in pixels) of output buffer</param>
 /// <param name="height">height (in pixels) of output buffer</param>
 /// <returns>point in screen-space</returns>
-D2D1_POINT_2F CGreenScreen::SkeletonToScreen(Vector4 skeletonPoint, int width, int height)
+Point2f CGreenScreen::SkeletonToScreen(Vector4 skeletonPoint, int width, int height)
 {
     LONG x, y;
     USHORT depth;
+	Point2f pt;
 
     // Calculate the skeleton's position on the screen
     // NuiTransformSkeletonToDepthImage returns coordinates in NUI_IMAGE_RESOLUTION_320x240 space
     NuiTransformSkeletonToDepthImage(skeletonPoint, &x, &y, &depth);
 
-    float screenPointX = static_cast<float>(x * width) / cScreenWidth;
-    float screenPointY = static_cast<float>(y * height) / cScreenHeight;
+    pt.x = static_cast<float>(x * width) / cScreenWidth;
+    pt.y = static_cast<float>(y * height) / cScreenHeight;
 
-    return D2D1::Point2F(screenPointX, screenPointY);
-}
-
-/// <summary>
-/// Ensure necessary Direct2d resources are created
-/// </summary>
-/// <returns>S_OK if successful, otherwise an error code</returns>
-HRESULT CGreenScreen::EnsureDirect2DResources()
-{
-    HRESULT hr = S_OK;
-
-    // If there isn't currently a render target, we need to create one
-    if (NULL == m_pRenderTarget)
-    {
-        RECT rc;
-        GetWindowRect( GetDlgItem( m_hWnd, IDC_VIDEOVIEW ), &rc );  
-    
-        int width = rc.right - rc.left;
-        int height = rc.bottom - rc.top;
-        D2D1_SIZE_U size = D2D1::SizeU( width, height );
-        D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties();
-        rtProps.pixelFormat = D2D1::PixelFormat( DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE);
-        rtProps.usage = D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE;
-
-        // Create a Hwnd render target, in order to render to the window set in initialize
-        hr = m_pD2DFactory->CreateHwndRenderTarget(
-            rtProps,
-            D2D1::HwndRenderTargetProperties(GetDlgItem( m_hWnd, IDC_VIDEOVIEW), size),
-            &m_pRenderTarget
-            );
-        if ( FAILED(hr) )
-        {
-            SetStatusMessage(L"Couldn't create Direct2D render target!");
-            return hr;
-        }
-
-        //light green
-        m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(68, 192, 68), &m_pBrushJointTracked);
-
-        //yellow
-        m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(255, 255, 0), &m_pBrushJointInferred);
-
-        //green
-        m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(0, 128, 0), &m_pBrushBoneTracked);
-
-        //gray
-        m_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(128, 128, 128), &m_pBrushBoneInferred);
-    }
-
-    return hr;
+    return pt;
 }
